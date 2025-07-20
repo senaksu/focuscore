@@ -1,4 +1,4 @@
- 🚀 FocusCore – AI Destekli Odaklanma ve Üretkenlik Koçu
+ ## 🚀 FocusCore – AI Destekli Odaklanma ve Üretkenlik Koçu
 
 ## 📌 Proje Hakkında  
 FocusCore, bireylerin çalışma sürecinde yaşadığı dikkat dağınıklığını en aza indirerek daha uzun ve verimli odaklanmalarını sağlamayı hedefleyen yapay zekâ tabanlı bir üretkenlik asistanıdır.  
