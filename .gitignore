@@ -1,18 +1,10 @@
-# Environment variables
+# Hassas bilgiler ve yerel dosyalar
 .env
 
-# Database
-*.db
-*.sqlite
 
-# Virtual environment
-venv/
-env/
-
-# Python cache
+# Python'un oluşturduğu geçici dosyalar
 __pycache__/
 *.pyc
 
-# IDE
-.vscode/
-.idea/ 
+# Sanal ortam klasörü (eğer varsa)
+venv/
