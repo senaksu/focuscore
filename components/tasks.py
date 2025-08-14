@@ -202,16 +202,26 @@ class TaskManager:
                         st.rerun()
             
             with col4:
-                # Delete button
+                # Delete button - Simple version
                 if st.button("🗑️", key=f"delete_{task.id}", help="Görevi sil"):
-                    self._confirm_delete_task(task.id, task.title)
+                    # Simple delete without confirmation
+                    try:
+                        self.db.delete_task(task.id)
+                        st.success(f"'{task.title}' görevi silindi!")
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"Görev silinirken hata oluştu: {str(e)}")
+                
+                # Alternative: Delete with confirmation
+                # if st.button("🗑️", key=f"delete_{task.id}", help="Görevi sil"):
+                #     self._confirm_delete_task(task.id, task.title)
             
             st.markdown("</div>", unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
     
     def _confirm_delete_task(self, task_id: int, task_title: str):
         """Confirm and delete task"""
-        # Simple confirmation using session state
+        # Use a more reliable confirmation system
         confirm_key = f"confirm_delete_{task_id}"
         
         if confirm_key not in st.session_state:
@@ -224,15 +234,20 @@ class TaskManager:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✅ Evet, Sil", key=f"confirm_yes_{task_id}"):
-                    self.db.delete_task(task_id)
-                    st.session_state[confirm_key] = False
-                    st.success("Görev silindi!")
-                    st.rerun()
+                    try:
+                        self.db.delete_task(task_id)
+                        st.session_state[confirm_key] = False
+                        st.success("Görev başarıyla silindi!")
+                        # Force page refresh
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"Görev silinirken hata oluştu: {str(e)}")
+                        st.session_state[confirm_key] = False
             
             with col2:
                 if st.button("❌ Hayır, İptal", key=f"confirm_no_{task_id}"):
                     st.session_state[confirm_key] = False
-                    st.rerun()
+                    st.experimental_rerun()
         else:
             # Reset confirmation state
             st.session_state[confirm_key] = False
