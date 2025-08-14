@@ -208,7 +208,7 @@ class TaskManager:
                     try:
                         self.db.delete_task(task.id)
                         st.success(f"'{task.title}' görevi silindi!")
-                        st.experimental_rerun()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Görev silinirken hata oluştu: {str(e)}")
                 
@@ -239,7 +239,7 @@ class TaskManager:
                         st.session_state[confirm_key] = False
                         st.success("Görev başarıyla silindi!")
                         # Force page refresh
-                        st.experimental_rerun()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Görev silinirken hata oluştu: {str(e)}")
                         st.session_state[confirm_key] = False
@@ -247,7 +247,7 @@ class TaskManager:
             with col2:
                 if st.button("❌ Hayır, İptal", key=f"confirm_no_{task_id}"):
                     st.session_state[confirm_key] = False
-                    st.experimental_rerun()
+                    st.rerun()
         else:
             # Reset confirmation state
             st.session_state[confirm_key] = False
