@@ -2,6 +2,7 @@ import streamlit as st
 import asyncio
 from datetime import datetime
 import uuid
+import re
 from ai_coach.agent import FocusCoachAgent
 
 class ChatInterface:
@@ -156,6 +157,14 @@ class ChatInterface:
                 tip = self.ai_coach.get_daily_tip()
                 self._add_message("AI Koç", tip)
     
+    def _strip_html_tags(self, text: str) -> str:
+        """Remove any HTML tags from text to avoid stray raw HTML in output."""
+        if not text:
+            return text
+        # Remove <tag ...> and </tag>
+        cleaned = re.sub(r"<[^>]+>", "", text)
+        return cleaned
+    
     def _render_chat_messages(self):
         """Render chat message history"""
         st.markdown("### 💬 Sohbet")
@@ -187,11 +196,14 @@ class ChatInterface:
                 
                 if is_performance_report and message['sender'] == 'AI Koç':
                     # Display performance report with special styling
+                    import html as _html
+                    clean_content = self._strip_html_tags(message['content'])
+                    safe_content = _html.escape(clean_content)
                     st.markdown(f"""
                     <div class="performance-report">
                         <div class="performance-title">{sender_icon} {sender_name}</div>
                         <div style="color: #e5e7eb; line-height: 1.8;">
-                            {message['content']}
+                            {safe_content}
                         </div>
                         <div class="chat-timestamp">
                             🕐 {message['timestamp'].strftime('%H:%M')}
@@ -200,11 +212,14 @@ class ChatInterface:
                     """, unsafe_allow_html=True)
                 else:
                     # Regular message display
+                    import html as _html
+                    clean_content = self._strip_html_tags(message['content'])
+                    safe_content = _html.escape(clean_content)
                     st.markdown(f"""
                     <div class="chat-message">
                         <h3>{sender_icon} {sender_name}</h3>
                         <div style="color: #e5e7eb; line-height: 1.6;">
-                            {message['content']}
+                            {safe_content}
                         </div>
                         <div class="chat-timestamp">
                             🕐 {message['timestamp'].strftime('%H:%M')}

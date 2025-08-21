@@ -370,6 +370,25 @@ def update_pomodoro_session(session_id: int, **kwargs):
     conn.commit()
     conn.close()
 
+def delete_pomodoro_sessions_all():
+    """Delete all pomodoro sessions (SQLite local cleanup)."""
+    db_path = get_database_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM pomodoro_sessions')
+    conn.commit()
+    conn.close()
+
+
+def delete_pomodoro_sessions_before(dt: datetime):
+    """Delete pomodoro sessions before a given datetime."""
+    db_path = get_database_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM pomodoro_sessions WHERE created_at < ?', (dt.isoformat(),))
+    conn.commit()
+    conn.close()
+
 class DatabaseManager:
     """Database manager class for all database operations"""
     
@@ -427,6 +446,14 @@ class DatabaseManager:
     def get_productivity_stats(self):
         """Get productivity statistics from database"""
         return get_productivity_stats()
+    
+    def delete_all_pomodoro_sessions(self):
+        """Delete all pomodoro sessions (local cleanup)."""
+        delete_pomodoro_sessions_all()
+    
+    def delete_pomodoro_sessions_before(self, dt: datetime):
+        """Delete pomodoro sessions before datetime (local cleanup)."""
+        delete_pomodoro_sessions_before(dt)
 
 def get_db() -> DatabaseManager:
     """Get database manager instance"""

@@ -1,23 +1,20 @@
 import streamlit as st
-import sqlite3
 import time
-import datetime
-from datetime import timedelta
-import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
-from database.database import init_database, PomodoroSession, Task
 from ai_coach.agent import FocusCoachAgent
 from components.pomodoro import PomodoroTimer
 from components.tasks import TaskManager
 from components.chat import ChatInterface
-from utils.helpers import format_duration, get_productivity_stats
+from utils.helpers import get_productivity_stats
+from database.database import init_database
+from components.auth import render_auth
 import os
 import base64
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (explicit path)
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 # Page configuration
 st.set_page_config(
@@ -245,7 +242,7 @@ class FocusCoreApp:
                 st.rerun()
                 
             st.markdown("""
-                <div class="main-card" onclick="document.querySelector('[data-testid=\\"pomodoro_card\\"]').click()">
+                <div class="main-card" onclick="document.querySelector('[data-testid=\\"ai_card\\"]').click()">
                     <div class="card-icon">🤖</div>
                     <div class="card-title">FocusCore Asistan</div>
                     <div class="card-description">Kişiselleştirilmiş üretkenlik tavsiyeleri</div>
@@ -298,6 +295,12 @@ class FocusCoreApp:
     
     def run(self):
         """Main application runner"""
+        # Require authentication
+        is_authenticated = render_auth()
+        if not is_authenticated:
+            st.info("Devam etmek için giriş yapın.")
+            return
+        
         self.render_sidebar()
         
         # Route to appropriate page

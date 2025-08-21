@@ -471,7 +471,10 @@ Değil  │            │             │
             return {
                 'status': "Görev yok",
                 'message': "Henüz görev eklenmemiş",
-                'completion_rate': "0%"
+                'completion_rate': "0%",
+                'total_tasks': 0,
+                'completed': 0,
+                'pending': 0
             }
         
         completion_rate = len(completed_tasks) / total_tasks * 100

@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import datetime, date
 from database.database import get_db
 from database.models import Task
+import html
 
 class TaskManager:
     def __init__(self):
@@ -172,11 +173,11 @@ class TaskManager:
             with col1:
                 # Task title and description
                 title_style = "text-decoration: line-through; opacity: 0.6;" if task.completed else ""
-                st.markdown(f"**<span style='{title_style}'>{task.title}</span>**", unsafe_allow_html=True)
+                st.markdown(f"**<span style='{title_style}'>{html.escape(task.title)}</span>**", unsafe_allow_html=True)
                 
                 if task.description:
                     desc_style = "opacity: 0.6;" if task.completed else "opacity: 0.8;"
-                    st.markdown(f"<small style='{desc_style}'>{task.description}</small>", unsafe_allow_html=True)
+                    st.markdown(f"<small style='{desc_style}'>{html.escape(task.description)}</small>", unsafe_allow_html=True)
                 
                 # Due date
                 if task.due_date:

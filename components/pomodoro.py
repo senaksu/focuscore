@@ -1,7 +1,7 @@
 import streamlit as st
 import time
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from database.database import get_db
 from database.models import PomodoroSession
 
@@ -95,8 +95,8 @@ class PomodoroTimer:
     def resume_timer(self):
         """Resume timer"""
         state = st.session_state.pomodoro_state
-        # Adjust start time to account for paused duration
-        state['start_time'] = datetime.now() - timedelta(seconds=state['paused_time'])
+        # Resume counting from now; keep accumulated elapsed in 'paused_time'
+        state['start_time'] = datetime.now()
         state['is_running'] = True
         st.success("▶️ Timer devam ediyor")
         st.rerun()
@@ -107,15 +107,13 @@ class PomodoroTimer:
         
         # Mark current session as incomplete if exists
         if state['current_session_id']:
-            session = PomodoroSession(
-                id=state['current_session_id'],
-                start_time=state['start_time'],
+            actual_duration = state['duration_minutes'] if state['current_phase'] == 'work' else state['break_duration']
+            self.db.update_pomodoro_session(
+                session_id=state['current_session_id'],
                 end_time=datetime.now(),
-                duration_minutes=state['duration_minutes'],
-                phase=state['current_phase'],
+                duration_minutes=actual_duration,
                 completed=False
             )
-            self.db.save_pomodoro_session(session)
         
         # Reset state
         state['is_running'] = False
@@ -364,6 +362,32 @@ class PomodoroTimer:
         
         # Recent sessions
         self._show_recent_sessions()
+
+        # Cleanup controls (local SQLite only)
+        with st.expander("🧹 Eski Seansları Temizle"):
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Tüm Pomodoro Kayıtlarını Sil", type="secondary"):
+                    try:
+                        self.db.delete_all_pomodoro_sessions()
+                        st.success("Tüm pomodoro kayıtları silindi.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error("Silme sırasında hata oluştu")
+                        st.caption(str(e))
+            with col2:
+                st.markdown("Belirli tarihten öncekileri sil:")
+                target_date = st.date_input("Tarih seç", value=None, key="cleanup_date")
+                if st.button("Seçilen tarihten öncekileri sil"):
+                    from datetime import datetime
+                    if target_date:
+                        try:
+                            self.db.delete_pomodoro_sessions_before(datetime.combine(target_date, datetime.min.time()))
+                            st.success("Seçilen tarihten önceki kayıtlar silindi.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error("Silme sırasında hata oluştu")
+                            st.caption(str(e))
     
     def _show_today_stats(self):
         """Show today's pomodoro statistics"""
