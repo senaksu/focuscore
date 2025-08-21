@@ -1,0 +1,11 @@
+[server]
+# Disable file watching to avoid inotify limit issues
+fileWatcherType = "none"
+
+[global]
+# Disable development mode features
+developmentMode = false
+
+[browser]
+# Disable browser features that might cause issues
+gatherUsageStats = false 

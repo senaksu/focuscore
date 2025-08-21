@@ -11,21 +11,28 @@ def get_supabase_client() -> Client:
     This avoids accessing st.secrets when not configured.
     Also attaches current auth session from st.session_state if present.
     """
-    # Prefer environment variables first
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_ANON_KEY")
-
-    # Fallback to Streamlit secrets if env not provided
-    if not url or not key:
+    url = None
+    key = None
+    
+    # Try Streamlit secrets first (for Cloud deployment)
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_ANON_KEY"]
+        st.write(f"✅ Secrets loaded from st.secrets - URL: {url[:30]}..., KEY: {key[:20]}...")
+    except Exception as e:
+        st.write(f"❌ Failed to load from st.secrets: {str(e)}")
+        
+        # Fallback to environment variables
         try:
-            if not url:
-                url = st.secrets["SUPABASE_URL"]
-            if not key:
-                key = st.secrets["SUPABASE_ANON_KEY"]
-        except Exception:
-            pass
+            url = os.getenv("SUPABASE_URL")
+            key = os.getenv("SUPABASE_ANON_KEY")
+            st.write(f"✅ Environment variables loaded - URL: {url[:30] if url else 'None'}..., KEY: {key[:20] if key else 'None'}...")
+        except Exception as e2:
+            st.write(f"❌ Failed to load from environment: {str(e2)}")
 
     if not url or not key:
+        st.error(f"❌ Configuration missing - URL: {'Present' if url else 'Missing'}, KEY: {'Present' if key else 'Missing'}")
+        st.write("Available st.secrets keys:", list(st.secrets.keys()) if hasattr(st, 'secrets') else "No secrets available")
         raise RuntimeError("Supabase configuration missing: SUPABASE_URL or SUPABASE_ANON_KEY.")
 
     client = create_client(url, key)
