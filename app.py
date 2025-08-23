@@ -9,6 +9,7 @@ from components.chat import ChatInterface
 from utils.helpers import get_productivity_stats
 from database.database import init_database
 from components.auth import render_auth
+from database.supabase_client import get_supabase_client
 import os
 import base64
 from dotenv import load_dotenv
@@ -257,14 +258,29 @@ class FocusCoreApp:
         st.markdown("---")
         st.markdown("<h3 style='color: white; text-align: center;'>📊 Bugünkü Performansın</h3>", unsafe_allow_html=True)
         
-        today_stats = get_productivity_stats()
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            st.info("İstatistikleri görmek için lütfen giriş yapın.")
+            return
+        
+        today_stats = get_productivity_stats(user_id=user_id)
         
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.markdown(f"""
                 <div class="metric-card">
-                    <h4 style='color: #3b82f6; margin: 0;'>{today_stats['today_pomodoros']}</h4>
+                    <h4 style='color: #3b82f6; margin: 0;'>{today_stats.get('today_pomodoros', 0)}</h4>
                     <p style='color: #94a3b8; margin: 5px 0 0 0;'>Tamamlanan Pomodoro</p>
                 </div>
             """, unsafe_allow_html=True)
@@ -272,7 +288,7 @@ class FocusCoreApp:
         with col2:
             st.markdown(f"""
                 <div class="metric-card">
-                    <h4 style='color: #10b981; margin: 0;'>{today_stats['today_focus_time']}</h4>
+                    <h4 style='color: #10b981; margin: 0;'>{today_stats.get('today_focus_time', '0 dk')}</h4>
                     <p style='color: #94a3b8; margin: 5px 0 0 0;'>Toplam Odaklanma</p>
                 </div>
             """, unsafe_allow_html=True)
@@ -280,7 +296,7 @@ class FocusCoreApp:
         with col3:
             st.markdown(f"""
                 <div class="metric-card">
-                    <h4 style='color: #f59e0b; margin: 0;'>{today_stats['completed_tasks']}</h4>
+                    <h4 style='color: #f59e0b; margin: 0;'>{today_stats.get('today_completed_tasks', 0)}</h4>
                     <p style='color: #94a3b8; margin: 5px 0 0 0;'>Tamamlanan Görev</p>
                 </div>
             """, unsafe_allow_html=True)
@@ -288,7 +304,7 @@ class FocusCoreApp:
         with col4:
             st.markdown(f"""
                 <div class="metric-card">
-                    <h4 style='color: #ef4444; margin: 0;'>{today_stats['pending_tasks']}</h4>
+                    <h4 style='color: #ef4444; margin: 0;'>{today_stats.get('pending_tasks', 0)}</h4>
                     <p style='color: #94a3b8; margin: 5px 0 0 0;'>Bekleyen Görev</p>
                 </div>
             """, unsafe_allow_html=True)
@@ -319,14 +335,29 @@ class FocusCoreApp:
         """Render detailed statistics page"""
         st.markdown("<h1 style='color: white;'>📊 Üretkenlik İstatistiklerin</h1>", unsafe_allow_html=True)
         
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            st.warning("📊 İstatistikleri görmek için giriş yapmanız gerekiyor.")
+            return
+        
         # Get detailed stats
-        stats = get_productivity_stats(detailed=True)
+        stats = get_productivity_stats(detailed=True, user_id=user_id)
         
         col1, col2 = st.columns(2)
         
         with col1:
             # Weekly pomodoro chart
-            if stats['weekly_data']:
+            if stats.get('weekly_data'):
                 df = pd.DataFrame(stats['weekly_data'])
                 fig = px.line(df, x='date', y='pomodoros', 
                              title='Son 7 Gün Pomodoro Trendi',
@@ -340,7 +371,7 @@ class FocusCoreApp:
         
         with col2:
             # Task completion rate
-            if stats['task_completion']:
+            if stats.get('task_completion'):
                 fig = px.pie(values=list(stats['task_completion'].values()), 
                            names=list(stats['task_completion'].keys()),
                            title='Görev Tamamlanma Oranı',

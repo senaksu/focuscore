@@ -2,12 +2,11 @@ import streamlit as st
 import time
 import asyncio
 from datetime import datetime
-from database.database import get_db
+from database.database import add_pomodoro_session, update_pomodoro_session, get_pomodoro_sessions
 from database.models import PomodoroSession
 
 class PomodoroTimer:
     def __init__(self):
-        self.db = get_db()
         self._init_session_state()
     
     def _init_session_state(self):
@@ -57,6 +56,21 @@ class PomodoroTimer:
         """Start pomodoro timer"""
         state = st.session_state.pomodoro_state
         
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            st.error("❌ Giriş yapmanız gerekiyor.")
+            return
+        
         if duration_minutes:
             state['duration_minutes'] = duration_minutes
         
@@ -74,10 +88,13 @@ class PomodoroTimer:
             completed=False
         )
         
-        session_id = self.db.save_pomodoro_session(session)
-        state['current_session_id'] = session_id
+        result = add_pomodoro_session(session, user_id)
+        if result:
+            state['current_session_id'] = result.get('id')
+            st.success(f"🍅 {state['duration_minutes']} dakikalık pomodoro başladı!")
+        else:
+            st.error("❌ Pomodoro başlatılırken hata oluştu.")
         
-        st.success(f"🍅 {state['duration_minutes']} dakikalık pomodoro başladı!")
         st.rerun()
     
     def pause_timer(self):
@@ -105,14 +122,28 @@ class PomodoroTimer:
         """Stop and reset timer"""
         state = st.session_state.pomodoro_state
         
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
         # Mark current session as incomplete if exists
-        if state['current_session_id']:
+        if state['current_session_id'] and user_id:
             actual_duration = state['duration_minutes'] if state['current_phase'] == 'work' else state['break_duration']
-            self.db.update_pomodoro_session(
-                session_id=state['current_session_id'],
-                end_time=datetime.now(),
-                duration_minutes=actual_duration,
-                completed=False
+            update_pomodoro_session(
+                state['current_session_id'],
+                {
+                    'end_time': datetime.now().isoformat(),
+                    'duration_minutes': actual_duration,
+                    'completed': False
+                },
+                user_id
             )
         
         # Reset state
@@ -130,7 +161,18 @@ class PomodoroTimer:
         """Mark current session as completed"""
         state = st.session_state.pomodoro_state
         
-        if state['current_session_id']:
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if state['current_session_id'] and user_id:
             # Calculate actual duration based on current phase
             if state['current_phase'] == 'work':
                 actual_duration = state['duration_minutes']
@@ -138,11 +180,14 @@ class PomodoroTimer:
                 actual_duration = state['break_duration']
             
             # Update existing session instead of creating new one
-            self.db.update_pomodoro_session(
-                session_id=state['current_session_id'],
-                end_time=datetime.now(),
-                duration_minutes=actual_duration,
-                completed=True
+            update_pomodoro_session(
+                state['current_session_id'],
+                {
+                    'end_time': datetime.now().isoformat(),
+                    'duration_minutes': actual_duration,
+                    'completed': True
+                },
+                user_id
             )
             
             state['session_count'] += 1
@@ -168,6 +213,22 @@ class PomodoroTimer:
     def start_break(self):
         """Start break period manually"""
         state = st.session_state.pomodoro_state
+        
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            st.error("❌ Giriş yapmanız gerekiyor.")
+            return
+        
         state['current_phase'] = 'break'
         state['start_time'] = datetime.now()
         state['is_running'] = True
@@ -182,10 +243,13 @@ class PomodoroTimer:
             completed=False
         )
         
-        session_id = self.db.save_pomodoro_session(session)
-        state['current_session_id'] = session_id
+        result = add_pomodoro_session(session, user_id)
+        if result:
+            state['current_session_id'] = result.get('id')
+            st.success(f"☕ {state['break_duration']} dakikalık mola başladı!")
+        else:
+            st.error("❌ Mola başlatılırken hata oluştu.")
         
-        st.success(f"☕ {state['break_duration']} dakikalık mola başladı!")
         st.rerun()
     
     def _end_session(self):
@@ -201,9 +265,10 @@ class PomodoroTimer:
         st.success("🎉 Harika! Bir pomodoro daha tamamlandı!")
         st.balloons()
     
-    def render(self):
-        """Render pomodoro timer interface"""
-        st.markdown("<h1 style='color: white;'>🍅 Pomodoro Study Timer</h1>", unsafe_allow_html=True)
+    def render(self, is_embedded: bool = False):
+        """Render the Pomodoro timer component"""
+        if not is_embedded:
+            st.markdown("<h1 style='color: white;'>🍅 Pomodoro Zamanlayıcı</h1>", unsafe_allow_html=True)
         
         # Get current status
         status = self.get_status()
@@ -361,41 +426,34 @@ class PomodoroTimer:
         self._show_today_stats()
         
         # Recent sessions
-        self._show_recent_sessions()
+        if not is_embedded:
+            self._show_recent_sessions()
 
-        # Cleanup controls (local SQLite only)
-        with st.expander("🧹 Eski Seansları Temizle"):
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Tüm Pomodoro Kayıtlarını Sil", type="secondary"):
-                    try:
-                        self.db.delete_all_pomodoro_sessions()
-                        st.success("Tüm pomodoro kayıtları silindi.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Silme sırasında hata oluştu")
-                        st.caption(str(e))
-            with col2:
-                st.markdown("Belirli tarihten öncekileri sil:")
-                target_date = st.date_input("Tarih seç", value=None, key="cleanup_date")
-                if st.button("Seçilen tarihten öncekileri sil"):
-                    from datetime import datetime
-                    if target_date:
-                        try:
-                            self.db.delete_pomodoro_sessions_before(datetime.combine(target_date, datetime.min.time()))
-                            st.success("Seçilen tarihten önceki kayıtlar silindi.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error("Silme sırasında hata oluştu")
-                            st.caption(str(e))
+        # Note about data management
+        st.info("💡 **Veri Yönetimi:** Tüm verileriniz Supabase'de güvenli şekilde saklanıyor ve sadece size özel. Eski verileri temizlemek için Supabase Dashboard'ı kullanabilirsiniz.")
     
     def _show_today_stats(self):
         """Show today's pomodoro statistics"""
         st.markdown("### 📊 Bugünkü İstatistikler")
         
-        today_sessions = self.db.get_pomodoro_sessions(days=1)
-        completed_work_sessions = [s for s in today_sessions if s.completed and s.phase == 'work']
-        total_focus_time = sum(s.duration_minutes for s in completed_work_sessions)
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            st.warning("Giriş yapmanız gerekiyor.")
+            return
+        
+        today_sessions = get_pomodoro_sessions(user_id, days=1)
+        completed_work_sessions = [s for s in today_sessions if s.get('completed', False) and s.get('phase') == 'work']
+        total_focus_time = sum(s.get('duration_minutes', 0) for s in completed_work_sessions)
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -410,14 +468,30 @@ class PomodoroTimer:
             st.metric("Ortalama Süre", f"{avg_duration:.0f} dk")
         
         with col4:
-            completion_rate = len(completed_work_sessions) / len([s for s in today_sessions if s.phase == 'work']) * 100 if today_sessions else 0
+            work_sessions = [s for s in today_sessions if s.get('phase') == 'work']
+            completion_rate = len(completed_work_sessions) / len(work_sessions) * 100 if work_sessions else 0
             st.metric("Tamamlanma Oranı", f"{completion_rate:.0f}%")
     
     def _show_recent_sessions(self):
         """Show recent pomodoro sessions"""
         st.markdown("### 📝 Son Seanslar")
         
-        recent_sessions = self.db.get_pomodoro_sessions(limit=5)
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            st.warning("Giriş yapmanız gerekiyor.")
+            return
+        
+        recent_sessions = get_pomodoro_sessions(user_id, limit=5)
         
         if not recent_sessions:
             st.info("Henüz pomodoro seansın yok. İlkini başlat!")
@@ -427,14 +501,45 @@ class PomodoroTimer:
             col1, col2, col3 = st.columns([2, 1, 1])
             
             with col1:
-                phase_icon = "🍅" if session.phase == 'work' else "☕"
-                st.write(f"{phase_icon} {session.phase.title()} - {session.created_at.strftime('%H:%M')}")
+                phase_icon = "🍅" if session.get('phase') == 'work' else "☕"
+                created_at = session.get('start_time', '') # Use start_time for recent sessions
+                if created_at:
+                    try:
+                        from datetime import datetime
+                        # Handle different date formats from Supabase
+                        if '+' in created_at and '.' in created_at:
+                            # Format: '2025-08-21T21:07:14.58982+00:00'
+                            parts = created_at.split('+')
+                            if len(parts) == 2:
+                                date_part = parts[0]
+                                timezone_part = parts[1]
+                                
+                                # Remove microseconds from date_part
+                                if '.' in date_part:
+                                    date_part = date_part.split('.')[0]
+                                
+                                # Reconstruct with timezone
+                                clean_date_str = date_part + '+' + timezone_part
+                                dt = datetime.fromisoformat(clean_date_str)
+                            else:
+                                dt = datetime.fromisoformat(created_at)
+                        elif created_at.endswith('Z'):
+                            dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        else:
+                            dt = datetime.fromisoformat(created_at)
+                        
+                        time_str = dt.strftime('%H:%M')
+                    except:
+                        time_str = created_at[:5]
+                else:
+                    time_str = 'N/A'
+                st.write(f"{phase_icon} {session.get('phase', 'unknown').title()} - {time_str}")
             
             with col2:
-                st.write(f"{session.duration_minutes} dk")
+                st.write(f"{session.get('duration_minutes', 0)} dk")
             
             with col3:
-                if session.completed:
+                if session.get('completed', False):
                     st.markdown("<span style='color: #10b981;'>✅ Tamamlandı</span>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span style='color: #ef4444;'>❌ Yarıda Bırakıldı</span>", unsafe_allow_html=True)

@@ -1,11 +1,24 @@
 [server]
 # Disable file watching to avoid inotify limit issues
 fileWatcherType = "none"
+# Enable CORS for production deployment
+enableCORS = true
+# Enable XSRF protection
+enableXsrfProtection = true
 
 [global]
 # Disable development mode features
 developmentMode = false
+# Disable telemetry
+telemetry = false
 
 [browser]
 # Disable browser features that might cause issues
-gatherUsageStats = false 
+gatherUsageStats = false
+
+[theme]
+# Custom theme configuration
+primaryColor = "#3b82f6"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1e2130"
+textColor = "#ffffff" 

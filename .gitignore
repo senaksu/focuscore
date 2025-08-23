@@ -1,10 +1,43 @@
 # Hassas bilgiler ve yerel dosyalar
 .env
-
+.env.local
+.env.production
+.streamlit/secrets.toml
 
 # Python'un oluşturduğu geçici dosyalar
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
 
-# Sanal ortam klasörü (eğer varsa)
+# Sanal ortam klasörü
 venv/
+.venv/
+env/
+.venv/
+
+# IDE ve editör dosyaları
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Log dosyaları
+*.log
+logs/
+
+# Database dosyaları (sadece Supabase kullanılacak)
+*.db
+*.sqlite
+*.sqlite3
+
+# OS dosyaları
+.DS_Store
+Thumbs.db
+
+# Temporary dosyalar
+*.tmp
+*.temp

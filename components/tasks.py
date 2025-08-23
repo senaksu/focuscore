@@ -1,12 +1,12 @@
 import streamlit as st
 from datetime import datetime, date
-from database.database import get_db
+from database.database import add_task, get_tasks, update_task, delete_task
 from database.models import Task
 import html
+from typing import Optional
 
 class TaskManager:
     def __init__(self):
-        self.db = get_db()
         self._init_session_state()
     
     def _init_session_state(self):
@@ -21,9 +21,10 @@ class TaskManager:
                 'due_date': None
             }
     
-    def render(self):
+    def render(self, is_embedded: bool = False, limit: Optional[int] = None):
         """Render task management interface"""
-        st.markdown("<h1 style='color: white;'>📋 Görev Yönetimi</h1>", unsafe_allow_html=True)
+        if not is_embedded:
+            st.markdown("<h1 style='color: white;'>📋 Görev Yönetimi</h1>", unsafe_allow_html=True)
         
         # Add new task section
         self._render_add_task()
@@ -32,7 +33,7 @@ class TaskManager:
         
         # Filter and display tasks
         self._render_task_filters()
-        self._render_task_list()
+        self._render_task_list(limit=limit)
     
     def _render_add_task(self):
         """Render add new task form"""
@@ -53,7 +54,20 @@ class TaskManager:
             submit_button = st.form_submit_button("🎯 Görev Ekle", use_container_width=True, type="primary")
             
             if submit_button and title.strip():
-                self._add_task(title, description, priority, due_date)
+                # Sanitize inputs
+                sanitized_title = html.escape(title.strip())
+                sanitized_description = html.escape(description.strip()) if description else ""
+                
+                # Validate input
+                if len(sanitized_title) > 200:
+                    st.error("Görev başlığı 200 karakterden uzun olamaz.")
+                    return
+                
+                if len(sanitized_description) > 1000:
+                    st.error("Açıklama 1000 karakterden uzun olamaz.")
+                    return
+                
+                self._add_task(sanitized_title, sanitized_description, priority, due_date)
     
     def _format_priority(self, priority: str) -> str:
         """Format priority display"""
@@ -66,6 +80,21 @@ class TaskManager:
     
     def _add_task(self, title: str, description: str, priority: str, due_date):
         """Add new task to database"""
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            st.error("❌ Giriş yapmanız gerekiyor.")
+            return
+        
         task = Task(
             title=title,
             description=description,
@@ -73,9 +102,9 @@ class TaskManager:
             due_date=datetime.combine(due_date, datetime.min.time()) if due_date else None
         )
         
-        task_id = self.db.save_task(task)
+        result = add_task(task, user_id)
         
-        if task_id:
+        if result:
             st.success("✅ Görev başarıyla eklendi!")
             st.rerun()
         else:
@@ -111,9 +140,12 @@ class TaskManager:
                 st.session_state.task_filter = 'high_priority'
                 st.rerun()
     
-    def _render_task_list(self):
+    def _render_task_list(self, limit: Optional[int] = None):
         """Render task list based on current filter"""
         tasks = self._get_filtered_tasks()
+        
+        if limit:
+            tasks = tasks[:limit]
         
         if not tasks:
             self._render_empty_state()
@@ -126,17 +158,32 @@ class TaskManager:
     
     def _get_filtered_tasks(self):
         """Get tasks based on current filter"""
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            # Handle both User object and dict
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            return []
+        
+        all_tasks = get_tasks(user_id=user_id)
+        
         if st.session_state.task_filter == 'all':
-            return self.db.get_tasks()
+            return all_tasks
         elif st.session_state.task_filter == 'pending':
-            return self.db.get_tasks(completed=False)
+            return [task for task in all_tasks if not task.get('completed')]
         elif st.session_state.task_filter == 'completed':
-            return self.db.get_tasks(completed=True)
+            return [task for task in all_tasks if task.get('completed')]
         elif st.session_state.task_filter == 'high_priority':
-            all_tasks = self.db.get_tasks()
-            return [task for task in all_tasks if task.priority == 'high']
+            return [task for task in all_tasks if task.get('priority') == 'high' and not task.get('completed')]
         else:
-            return self.db.get_tasks()
+            return all_tasks
     
     def _render_empty_state(self):
         """Render empty state message"""
@@ -150,7 +197,7 @@ class TaskManager:
         message = filter_messages.get(st.session_state.task_filter, "Görev bulunamadı.")
         st.info(f"📝 {message}")
     
-    def _render_task_item(self, task: Task):
+    def _render_task_item(self, task):
         """Render individual task item"""
         # Determine task styling
         priority_classes = {
@@ -159,8 +206,8 @@ class TaskManager:
             'low': 'priority-low'
         }
         
-        priority_class = priority_classes.get(task.priority, 'priority-medium')
-        completed_class = ' completed-task' if task.completed else ''
+        priority_class = priority_classes.get(task.get('priority', 'medium'), 'priority-medium')
+        completed_class = ' completed-task' if task.get('completed') else ''
         
         # Task container
         with st.container():
@@ -172,98 +219,134 @@ class TaskManager:
             
             with col1:
                 # Task title and description
-                title_style = "text-decoration: line-through; opacity: 0.6;" if task.completed else ""
-                st.markdown(f"**<span style='{title_style}'>{html.escape(task.title)}</span>**", unsafe_allow_html=True)
+                title_style = "text-decoration: line-through; opacity: 0.6;" if task.get('completed') else ""
+                st.markdown(f"**<span style='{title_style}'>{html.escape(task.get('title', ''))}</span>**", unsafe_allow_html=True)
                 
-                if task.description:
-                    desc_style = "opacity: 0.6;" if task.completed else "opacity: 0.8;"
-                    st.markdown(f"<small style='{desc_style}'>{html.escape(task.description)}</small>", unsafe_allow_html=True)
+                if task.get('description'):
+                    desc_style = "opacity: 0.6;" if task.get('completed') else "opacity: 0.8;"
+                    st.markdown(f"<small style='{desc_style}'>{html.escape(task.get('description', ''))}</small>", unsafe_allow_html=True)
                 
                 # Due date
-                if task.due_date:
-                    due_text = task.due_date.strftime("%d.%m.%Y")
-                    is_overdue = task.due_date.date() < date.today() and not task.completed
-                    due_color = "color: #ef4444;" if is_overdue else "color: #f59e0b;"
-                    st.markdown(f"<small style='{due_color}'>📅 {due_text}</small>", unsafe_allow_html=True)
+                if task.get('due_date'):
+                    try:
+                        due_date = datetime.fromisoformat(task.get('due_date').replace('Z', '+00:00'))
+                        due_text = due_date.strftime("%d.%m.%Y")
+                        is_overdue = due_date.date() < date.today() and not task.get('completed')
+                        due_color = "color: #ef4444;" if is_overdue else "color: #f59e0b;"
+                        st.markdown(f"<small style='{due_color}'>📅 {due_text}</small>", unsafe_allow_html=True)
+                    except:
+                        pass
             
             with col2:
                 # Priority indicator
-                priority_display = self._format_priority(task.priority)
+                priority_display = self._format_priority(task.get('priority', 'medium'))
                 st.markdown(f"<small>{priority_display}</small>", unsafe_allow_html=True)
             
             with col3:
                 # Complete/Uncomplete button
-                if task.completed:
-                    if st.button("↩️", key=f"uncomplete_{task.id}", help="Tamamlanmadı olarak işaretle"):
-                        self.db.toggle_task_completion(task.id)
-                        st.rerun()
+                if task.get('completed'):
+                    if st.button("↩️", key=f"uncomplete_{task.get('id')}", help="Tamamlanmadı olarak işaretle"):
+                        self._toggle_task_status(task.get('id'), False)
                 else:
-                    if st.button("✅", key=f"complete_{task.id}", help="Tamamlandı olarak işaretle"):
-                        self.db.toggle_task_completion(task.id)
-                        st.rerun()
+                    if st.button("✅", key=f"complete_{task.get('id')}", help="Tamamlandı olarak işaretle"):
+                        self._toggle_task_status(task.get('id'), True)
             
             with col4:
-                # Delete button - Simple version
-                if st.button("🗑️", key=f"delete_{task.id}", help="Görevi sil"):
-                    # Simple delete without confirmation
-                    try:
-                        self.db.delete_task(task.id)
-                        st.success(f"'{task.title}' görevi silindi!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Görev silinirken hata oluştu: {str(e)}")
-                
-                # Alternative: Delete with confirmation
-                # if st.button("🗑️", key=f"delete_{task.id}", help="Görevi sil"):
-                #     self._confirm_delete_task(task.id, task.title)
+                # Delete button
+                if st.button("🗑️", key=f"delete_{task.get('id')}", help="Görevi sil"):
+                    self._delete_task(task.get('id'))
             
             st.markdown("</div>", unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
     
-    def _confirm_delete_task(self, task_id: int, task_title: str):
-        """Confirm and delete task"""
-        # Use a more reliable confirmation system
-        confirm_key = f"confirm_delete_{task_id}"
-        
-        if confirm_key not in st.session_state:
-            st.session_state[confirm_key] = False
-        
-        if not st.session_state[confirm_key]:
-            st.session_state[confirm_key] = True
-            st.warning(f"'{task_title}' görevini silmek istediğinizden emin misiniz?")
+    def _toggle_task_status(self, task_id, new_status):
+        """Toggle task completion status"""
+        try:
+            updates = {'completed': new_status}
+            if new_status:
+                updates['completed_at'] = datetime.now().isoformat()
+            else:
+                updates['completed_at'] = None
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("✅ Evet, Sil", key=f"confirm_yes_{task_id}"):
-                    try:
-                        self.db.delete_task(task_id)
-                        st.session_state[confirm_key] = False
-                        st.success("Görev başarıyla silindi!")
-                        # Force page refresh
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Görev silinirken hata oluştu: {str(e)}")
-                        st.session_state[confirm_key] = False
+            # Get current user ID from session state
+            user = st.session_state.get("user")
+            user_id = None
             
-            with col2:
-                if st.button("❌ Hayır, İptal", key=f"confirm_no_{task_id}"):
-                    st.session_state[confirm_key] = False
+            if user:
+                if hasattr(user, 'id'):
+                    user_id = user.id
+                elif isinstance(user, dict):
+                    user_id = user.get('id')
+            
+            if user_id:
+                result = update_task(task_id, updates, user_id)
+                if result:
+                    st.toast("✅ Görev durumu güncellendi!")
                     st.rerun()
-        else:
-            # Reset confirmation state
-            st.session_state[confirm_key] = False
+                else:
+                    st.error("❌ Görev güncellenirken hata oluştu.")
+            else:
+                st.error("❌ Kullanıcı kimliği bulunamadı.")
+        except Exception as e:
+            st.error(f"❌ Hata: {str(e)}")
+    
+    def _delete_task(self, task_id):
+        """Delete task"""
+        try:
+            # Get current user ID from session state
+            user = st.session_state.get("user")
+            user_id = None
+            
+            if user:
+                if hasattr(user, 'id'):
+                    user_id = user.id
+                elif isinstance(user, dict):
+                    user_id = user.get('id')
+            
+            if user_id:
+                result = delete_task(task_id, user_id)
+                if result:
+                    st.success("✅ Görev başarıyla silindi!")
+                    st.rerun()
+                else:
+                    st.error("❌ Görev silinirken hata oluştu.")
+            else:
+                st.error("❌ Kullanıcı kimliği bulunamadı.")
+        except Exception as e:
+            st.error(f"❌ Hata: {str(e)}")
     
     def get_task_stats(self):
         """Get task statistics"""
-        all_tasks = self.db.get_tasks()
-        completed_tasks = [t for t in all_tasks if t.completed]
-        pending_tasks = [t for t in all_tasks if not t.completed]
-        high_priority_tasks = [t for t in pending_tasks if t.priority == 'high']
+        # Get current user ID from session state
+        user = st.session_state.get("user")
+        user_id = None
+        
+        if user:
+            if hasattr(user, 'id'):
+                user_id = user.id
+            elif isinstance(user, dict):
+                user_id = user.get('id')
+        
+        if not user_id:
+            return {
+                'total_tasks': 0,
+                'completed_tasks': 0,
+                'pending_tasks': 0,
+                'high_priority_pending': 0,
+                'today_completed': 0,
+                'completion_rate': 0
+            }
+        
+        all_tasks = get_tasks(user_id=user_id)
+        completed_tasks = [t for t in all_tasks if t.get('completed')]
+        pending_tasks = [t for t in all_tasks if not t.get('completed')]
+        high_priority_tasks = [t for t in pending_tasks if t.get('priority') == 'high']
         
         # Today's tasks
         today = date.today()
         today_completed = [t for t in completed_tasks 
-                          if t.completed_at and t.completed_at.date() == today]
+                          if t.get('completed_at') and 
+                          datetime.fromisoformat(t.get('completed_at').replace('Z', '+00:00')).date() == today]
         
         return {
             'total_tasks': len(all_tasks),

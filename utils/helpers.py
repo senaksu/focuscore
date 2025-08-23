@@ -1,102 +1,165 @@
 from datetime import datetime, timedelta, date
 from typing import Dict, Any, List
-from database.database import get_db
+import streamlit as st
+import logging
+from database.database import get_pomodoro_sessions, get_tasks
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def format_duration(minutes: int) -> str:
     """Format duration in minutes to human readable format"""
-    if minutes < 60:
-        return f"{minutes} dk"
-    
-    hours = minutes // 60
-    remaining_minutes = minutes % 60
-    
-    if remaining_minutes == 0:
-        return f"{hours} sa"
-    else:
-        return f"{hours} sa {remaining_minutes} dk"
-
-def get_productivity_stats(detailed: bool = False) -> Dict[str, Any]:
-    """Get productivity statistics"""
-    db = get_db()
-    
-    # Get today's data
-    today = date.today()
-    today_sessions = db.get_pomodoro_sessions(days=1)
-    today_pomodoros = len([s for s in today_sessions if s.completed and s.phase == 'work'])
-    today_focus_time = sum(s.duration_minutes for s in today_sessions if s.completed and s.phase == 'work')
-    
-    # Get task statistics
-    all_tasks = db.get_tasks()
-    completed_tasks = len([t for t in all_tasks if t.completed])
-    pending_tasks = len([t for t in all_tasks if not t.completed])
-    
-    today_completed_tasks = len([t for t in all_tasks 
-                               if t.completed and t.completed_at 
-                               and t.completed_at.date() == today])
-    
-    basic_stats = {
-        'today_pomodoros': today_pomodoros,
-        'today_focus_time': format_duration(today_focus_time),
-        'completed_tasks': completed_tasks,
-        'pending_tasks': pending_tasks,
-        'today_completed_tasks': today_completed_tasks
-    }
-    
-    if not detailed:
-        return basic_stats
-    
-    # Detailed statistics
-    # Weekly data
-    weekly_sessions = db.get_pomodoro_sessions(days=7)
-    weekly_data = []
-    
-    for i in range(7):
-        target_date = today - timedelta(days=i)
-        day_sessions = [s for s in weekly_sessions 
-                       if s.created_at and s.created_at.date() == target_date 
-                       and s.completed and s.phase == 'work']
+    try:
+        if minutes < 60:
+            return f"{minutes} dk"
         
-        weekly_data.append({
-            'date': target_date.strftime('%d.%m'),
-            'pomodoros': len(day_sessions),
-            'focus_time': sum(s.duration_minutes for s in day_sessions)
-        })
+        hours = minutes // 60
+        remaining_minutes = minutes % 60
+        
+        if remaining_minutes == 0:
+            return f"{hours} sa"
+        else:
+            return f"{hours} sa {remaining_minutes} dk"
+    except Exception as e:
+        logger.error(f"Error formatting duration: {e}")
+        return f"{minutes} dk"
+
+@st.cache_data(ttl=60)  # Cache for 1 minute
+def _parse_date_safely(date_str: str) -> datetime:
+    """Safely parse date strings from Supabase with different formats"""
+    if not date_str:
+        return datetime.now()
     
-    weekly_data.reverse()  # Oldest to newest
-    
-    # Task completion breakdown
-    task_completion = {
-        'Tamamlanan': completed_tasks,
-        'Bekleyen': pending_tasks
-    } if (completed_tasks + pending_tasks) > 0 else {}
-    
-    # Calculate additional metrics
-    avg_pomodoros = sum(day['pomodoros'] for day in weekly_data) / 7 if weekly_data else 0
-    best_day_data = max(weekly_data, key=lambda x: x['pomodoros']) if weekly_data else None
-    best_day = best_day_data['date'] if best_day_data and best_day_data['pomodoros'] > 0 else "Henüz yok"
-    
-    # Consistency score (how many days worked in last 7 days)
-    working_days = len([day for day in weekly_data if day['pomodoros'] > 0])
-    consistency_score = (working_days / 7) * 100
-    
-    # Average daily focus time
-    total_weekly_focus = sum(day['focus_time'] for day in weekly_data)
-    avg_daily_focus = total_weekly_focus / 7
-    
-    detailed_stats = {
-        **basic_stats,
-        'weekly_data': weekly_data,
-        'task_completion': task_completion,
-        'total_pomodoros': sum(day['pomodoros'] for day in weekly_data),
-        'total_completed_tasks': completed_tasks,
-        'avg_pomodoros': round(avg_pomodoros, 1),
-        'best_day': best_day,
-        'consistency_score': round(consistency_score),
-        'avg_daily_focus': round(avg_daily_focus),
-        'total_focus_time': format_duration(total_weekly_focus)
-    }
-    
-    return detailed_stats
+    try:
+        # Handle different date formats from Supabase
+        if '+' in date_str and '.' in date_str:
+            # Format: '2025-08-21T21:07:14.58982+00:00'
+            # Remove microseconds and keep timezone
+            parts = date_str.split('+')
+            if len(parts) == 2:
+                date_part = parts[0]
+                timezone_part = parts[1]
+                
+                # Remove microseconds from date_part
+                if '.' in date_part:
+                    date_part = date_part.split('.')[0]
+                
+                # Reconstruct with timezone
+                clean_date_str = date_part + '+' + timezone_part
+                return datetime.fromisoformat(clean_date_str)
+        
+        elif date_str.endswith('Z'):
+            # Format: '2025-08-21T21:07:14Z'
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        
+        else:
+            # Standard ISO format
+            return datetime.fromisoformat(date_str)
+            
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Failed to parse date '{date_str}': {e}")
+        # Fallback to current time if parsing fails
+        return datetime.now()
+
+def get_productivity_stats(detailed: bool = False, user_id: str = None) -> Dict[str, Any]:
+    """Get productivity statistics for specific user"""
+    try:
+        if not user_id:
+            return {
+                'today_pomodoros': 0,
+                'today_focus_time': '0 dk',
+                'completed_tasks': 0,
+                'pending_tasks': 0,
+                'today_completed_tasks': 0
+            }
+        
+        # Get today's data
+        today = date.today()
+        today_sessions = get_pomodoro_sessions(user_id, days=1)
+        today_pomodoros = len([s for s in today_sessions if s.get('completed', False) and s.get('phase') == 'work'])
+        today_focus_time = sum(s.get('duration_minutes', 0) for s in today_sessions if s.get('completed', False) and s.get('phase') == 'work')
+        
+        # Get task statistics
+        all_tasks = get_tasks(user_id)
+        completed_tasks = len([t for t in all_tasks if t.get('completed', False)])
+        pending_tasks = len([t for t in all_tasks if not t.get('completed', False)])
+        
+        today_completed_tasks = len([t for t in all_tasks 
+                                   if t.get('completed', False) and t.get('completed_at') 
+                                   and _parse_date_safely(t.get('completed_at', '')).date() == today])
+        
+        basic_stats = {
+            'today_pomodoros': today_pomodoros,
+            'today_focus_time': format_duration(today_focus_time),
+            'today_completed_tasks': today_completed_tasks,
+            'completed_tasks': completed_tasks,
+            'pending_tasks': pending_tasks
+        }
+        
+        if not detailed:
+            return basic_stats
+        
+        # Detailed statistics
+        # Weekly data
+        weekly_sessions = get_pomodoro_sessions(user_id, days=7)
+        weekly_data = []
+        
+        for i in range(7):
+            target_date = today - timedelta(days=i)
+            day_sessions = [s for s in weekly_sessions 
+                           if s.get('created_at') and _parse_date_safely(s.get('created_at', '')).date() == target_date 
+                           and s.get('completed', False) and s.get('phase') == 'work']
+            
+            weekly_data.append({
+                'date': target_date.strftime('%Y-%m-%d'),
+                'pomodoros': len(day_sessions),
+                'focus_time': sum(s.get('duration_minutes', 0) for s in day_sessions)
+            })
+        
+        # Task completion breakdown
+        task_completion = {
+            'Tamamlanan': completed_tasks,
+            'Bekleyen': pending_tasks
+        }
+        
+        # Calculate averages
+        total_pomodoros = len([s for s in weekly_sessions if s.get('completed', False) and s.get('phase') == 'work'])
+        avg_pomodoros = round(total_pomodoros / 7, 1) if weekly_sessions else 0
+        
+        # Find best day
+        best_day_data = max(weekly_data, key=lambda x: x['pomodoros']) if weekly_data else None
+        best_day = best_day_data['date'] if best_day_data and best_day_data['pomodoros'] > 0 else 'Henüz yok'
+        
+        detailed_stats = {
+            **basic_stats,
+            'weekly_data': weekly_data,
+            'task_completion': task_completion,
+            'total_pomodoros': total_pomodoros,
+            'total_completed_tasks': completed_tasks,
+            'avg_pomodoros': avg_pomodoros,
+            'best_day': best_day
+        }
+        
+        return detailed_stats
+        
+    except Exception as e:
+        logger.error(f"Error getting productivity stats: {e}")
+        # Return safe fallback values
+        return {
+            'today_pomodoros': 0,
+            'today_focus_time': '0 dk',
+            'completed_tasks': 0,
+            'pending_tasks': 0,
+            'today_completed_tasks': 0,
+            'weekly_data': [],
+            'task_completion': {},
+            'total_pomodoros': 0,
+            'total_completed_tasks': 0,
+            'avg_pomodoros': 0,
+            'best_day': 'Henüz yok'
+        }
 
 def calculate_productivity_score(user_data: Dict[str, Any]) -> int:
     """Calculate overall productivity score (0-100)"""
@@ -212,21 +275,34 @@ def format_task_due_date(due_date: datetime) -> str:
     else:
         return f"📅 {due_date.strftime('%d.%m.%Y')}"
 
-def export_data_summary() -> Dict[str, Any]:
+def export_data_summary(user_id: str = None) -> Dict[str, Any]:
     """Export summary of user data for analysis"""
-    db = get_db()
+    if not user_id:
+        return {
+            'export_date': datetime.now().isoformat(),
+            'summary': {
+                'total_pomodoros': 0,
+                'total_focus_time_minutes': 0,
+                'total_tasks': 0,
+                'completed_tasks': 0,
+                'high_priority_tasks': 0,
+                'average_session_length': 0,
+                'completion_rate': 0
+            },
+            'daily_breakdown': []
+        }
     
     # Get all data
-    sessions = db.get_pomodoro_sessions(days=30)  # Last 30 days
-    tasks = db.get_tasks()
+    sessions = get_pomodoro_sessions(user_id, days=30)  # Last 30 days
+    tasks = get_tasks(user_id)
     
     # Process pomodoro data
-    work_sessions = [s for s in sessions if s.phase == 'work' and s.completed]
-    total_focus_time = sum(s.duration_minutes for s in work_sessions)
+    work_sessions = [s for s in sessions if s.get('phase') == 'work' and s.get('completed', False)]
+    total_focus_time = sum(s.get('duration_minutes', 0) for s in work_sessions)
     
     # Process task data
-    completed_tasks = [t for t in tasks if t.completed]
-    high_priority_tasks = [t for t in tasks if t.priority == 'high']
+    completed_tasks = [t for t in tasks if t.get('completed', False)]
+    high_priority_tasks = [t for t in tasks if t.get('priority') == 'high']
     
     return {
         'export_date': datetime.now().isoformat(),
@@ -239,5 +315,5 @@ def export_data_summary() -> Dict[str, Any]:
             'average_session_length': total_focus_time / len(work_sessions) if work_sessions else 0,
             'completion_rate': len(completed_tasks) / len(tasks) * 100 if tasks else 0
         },
-        'daily_breakdown': get_productivity_stats(detailed=True)['weekly_data']
+        'daily_breakdown': get_productivity_stats(detailed=True, user_id=user_id)['weekly_data']
     }

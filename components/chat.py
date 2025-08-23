@@ -4,6 +4,7 @@ from datetime import datetime
 import uuid
 import re
 from ai_coach.agent import FocusCoachAgent
+from database.database import get_chat_messages
 
 class ChatInterface:
     def __init__(self, ai_coach: FocusCoachAgent):
@@ -284,16 +285,31 @@ class ChatInterface:
     def _load_chat_history(self):
         """Load chat history from database"""
         try:
-            db_messages = self.ai_coach.db.get_chat_history(
+            # Get current user ID from session state
+            user = st.session_state.get("user")
+            user_id = None
+            
+            if user:
+                # Handle both User object and dict
+                if hasattr(user, 'id'):
+                    user_id = user.id
+                elif isinstance(user, dict):
+                    user_id = user.get('id')
+            
+            if not user_id:
+                return
+            
+            db_messages = get_chat_messages(
+                user_id,
                 st.session_state.chat_session_id, 
                 limit=10
             )
             
             for db_msg in db_messages:
                 # Add user message
-                self._add_message("user", db_msg.user_message)
+                self._add_message("user", db_msg.get('user_message', ''))
                 # Add AI response
-                self._add_message("AI Koç", db_msg.ai_response)
+                self._add_message("AI Koç", db_msg.get('ai_response', ''))
                 
         except Exception as e:
             print(f"Error loading chat history: {e}")
@@ -305,7 +321,22 @@ class ChatInterface:
             st.markdown("### 🎯 Odaklanma Skoru")
             
             try:
-                focus_data = self.ai_coach.get_focus_score()
+                # Get current user ID from session state
+                user = st.session_state.get("user")
+                user_id = None
+                
+                if user:
+                    # Handle both User object and dict
+                    if hasattr(user, 'id'):
+                        user_id = user.id
+                    elif isinstance(user, dict):
+                        user_id = user.get('id')
+                
+                if not user_id:
+                    st.warning("Giriş yapmanız gerekiyor.")
+                    return
+                
+                focus_data = self.ai_coach.get_focus_score(user_id)
                 
                 # Overall score with circular progress
                 score = focus_data['overall_score']

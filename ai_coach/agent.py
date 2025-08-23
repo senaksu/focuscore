@@ -3,7 +3,7 @@ import random
 from datetime import datetime
 from typing import Dict, Any, List
 import google.generativeai as genai
-from database.database import get_db
+from database.database import add_chat_message, get_chat_messages, get_pomodoro_sessions, get_tasks
 from utils.helpers import get_productivity_stats
 from .prompts import SYSTEM_PROMPT, CONTEXT_PROMPT_TEMPLATE, DAILY_TIPS, BREAK_ACTIVITIES
 
@@ -18,23 +18,21 @@ class FocusCoachAgent:
         else:
             self.enabled = False
             print("⚠️  Google API Key bulunamadı. AI Coach özelliği deaktif.")
-        
-        self.db = get_db()
     
-    def get_context(self) -> Dict[str, Any]:
+    def get_context(self, user_id: str = None) -> Dict[str, Any]:
         """Get user context for personalized responses"""
-        stats = get_productivity_stats()
+        stats = get_productivity_stats(user_id=user_id)
         return {
             'today_pomodoros': stats['today_pomodoros'],
             'today_tasks': stats['completed_tasks'],
             'pending_tasks': stats['pending_tasks'],
             'avg_pomodoros': stats.get('avg_pomodoros', 0),
-            'current_status': self._get_current_status()
+            'current_status': self._get_current_status(user_id)
         }
     
-    def _get_current_status(self) -> str:
+    def _get_current_status(self, user_id: str = None) -> str:
         """Determine current user status"""
-        stats = get_productivity_stats()
+        stats = get_productivity_stats(user_id=user_id)
         
         if stats['today_pomodoros'] == 0:
             return "Henüz bugün hiç pomodoro yapmamış"
@@ -53,9 +51,9 @@ class FocusCoachAgent:
         """Get random break activity suggestion"""
         return random.choice(BREAK_ACTIVITIES)
     
-    def get_motivational_message(self, context: str = "general") -> str:
+    def get_motivational_message(self, context: str = "general", user_id: str = None) -> str:
         """Get motivational message based on context"""
-        stats = get_productivity_stats()
+        stats = get_productivity_stats(user_id=user_id)
         
         if context == "start_pomodoro":
             if stats['today_pomodoros'] == 0:
@@ -81,6 +79,18 @@ class FocusCoachAgent:
             return "⚠️ AI Coach şu anda kullanılamıyor. Google API anahtarını kontrol edin."
         
         try:
+            # Get current user ID from session state first
+            import streamlit as st
+            user = st.session_state.get("user")
+            user_id = None
+            
+            if user:
+                # Handle both User object and dict
+                if hasattr(user, 'id'):
+                    user_id = user.id
+                elif isinstance(user, dict):
+                    user_id = user.get('id')
+            
             # Check if user is asking about performance analysis
             performance_keywords = [
                 'performans', 'analiz', 'nasıl gidiyor', 'bugün nasıl', 'istatistik', 
@@ -91,10 +101,10 @@ class FocusCoachAgent:
             
             if is_performance_question:
                 # Provide detailed performance analysis
-                return self._get_performance_analysis_response()
+                return self._get_performance_analysis_response(user_id)
             
             # Get user context
-            context = self.get_context()
+            context = self.get_context(user_id)
             
             # Build full prompt
             context_prompt = CONTEXT_PROMPT_TEMPLATE.format(**context)
@@ -106,12 +116,14 @@ class FocusCoachAgent:
             
             # Save to database
             from database.models import ChatMessage
-            message = ChatMessage(
-                user_message=user_message,
-                ai_response=ai_response,
-                session_id=session_id
-            )
-            self.db.add_chat_message(message)
+            
+            if user_id:
+                message = ChatMessage(
+                    user_message=user_message,
+                    ai_response=ai_response,
+                    session_id=session_id
+                )
+                add_chat_message(message, user_id)
             
             return ai_response
             
@@ -122,48 +134,49 @@ class FocusCoachAgent:
             # Provide fallback response with beautiful formatting
             return self._get_fallback_response(user_message)
     
-    def _get_performance_analysis_response(self) -> str:
+    def _get_performance_analysis_response(self, user_id: str = None) -> str:
         """Generate comprehensive performance analysis response"""
         try:
-            insights = self.analyze_performance()
+            insights = self.analyze_performance(user_id)
             
             response = "🎉 **Merhaba Dostum! Bugünkü Performans Raporun Hazır!** 📊\n\n"
             
             # Work Efficiency
-            work_eff = insights['work_efficiency']
+            work_eff = insights.get('work_efficiency', {})
             response += "**🎯 Çalışma Verimliliği**\n"
-            response += f"• **Seviye:** {work_eff['level']} ⭐\n"
-            response += f"• **Mesaj:** {work_eff['message']}\n"
-            response += f"• **📈 Tamamlanma Oranı:** {work_eff['completion_rate']}\n"
-            response += f"• **⏱️ Toplam Çalışma:** {work_eff['total_work_time']}\n\n"
+            response += f"• **Seviye:** {work_eff.get('level', 'N/A')} ⭐\n"
+            response += f"• **Mesaj:** {work_eff.get('message', 'Veri yok')}\n"
+            response += f"• **📈 Tamamlanma Oranı:** {work_eff.get('completion_rate', 'N/A')}\n"
+            response += f"• **⏱️ Toplam Çalışma:** {work_eff.get('total_work_time', 'N/A')}\n\n"
             
             # Break Balance
-            break_bal = insights['break_balance']
+            break_bal = insights.get('break_balance', {})
             response += "**☕ Mola Dengesi**\n"
-            response += f"• **Durum:** {break_bal['balance']} ⚖️\n"
-            response += f"• **Mesaj:** {break_bal['message']}\n"
-            response += f"• **📊 Çalışma:Mola Oranı:** {break_bal['ratio']}\n"
-            response += f"• **🔢 Oran:** {break_bal['work_break_ratio']}\n\n"
+            response += f"• **Durum:** {break_bal.get('balance', 'N/A')} ⚖️\n"
+            response += f"• **Mesaj:** {break_bal.get('message', 'Veri yok')}\n"
+            response += f"• **📊 Çalışma:Mola Oranı:** {break_bal.get('ratio', 'N/A')}\n"
+            response += f"• **🔢 Oran:** {break_bal.get('work_break_ratio', 'N/A')}\n\n"
             
             # Task Management
-            task_mgmt = insights['task_management']
+            task_mgmt = insights.get('task_management', {})
             response += "**📋 Görev Yönetimi**\n"
-            response += f"• **Durum:** {task_mgmt['status']} 🎯\n"
-            response += f"• **Mesaj:** {task_mgmt['message']}\n"
-            response += f"• **✅ Tamamlanan:** {task_mgmt['completed']} | **⏳ Bekleyen:** {task_mgmt['pending']}\n"
-            response += f"• **📊 Tamamlanma Oranı:** {task_mgmt['completion_rate']}\n\n"
+            response += f"• **Durum:** {task_mgmt.get('status', 'N/A')} 🎯\n"
+            response += f"• **Mesaj:** {task_mgmt.get('message', 'Veri yok')}\n"
+            response += f"• **✅ Tamamlanan:** {task_mgmt.get('completed', 0)} | **⏳ Bekleyen:** {task_mgmt.get('pending', 0)}\n"
+            response += f"• **📊 Tamamlanma Oranı:** {task_mgmt.get('completion_rate', 'N/A')}\n\n"
             
             # Productivity Trends
-            trends = insights['productivity_trends']
+            trends = insights.get('productivity_trends', {})
             response += "**📈 Üretkenlik Trendi**\n"
-            response += f"• **Trend:** {trends['trend']} 📊\n"
-            response += f"• **Mesaj:** {trends['message']}\n"
-            response += f"• **📅 Analiz Periyodu:** {trends['pattern']}\n\n"
+            response += f"• **Trend:** {trends.get('trend', 'N/A')} 📊\n"
+            response += f"• **Mesaj:** {trends.get('message', 'Veri yok')}\n"
+            response += f"• **📅 Analiz Periyodu:** {trends.get('pattern', 'N/A')}\n\n"
             
             # Recommendations
-            if insights['recommendations']:
+            recommendations = insights.get('recommendations', [])
+            if recommendations:
                 response += "**💡 Kişisel Önerilerim**\n"
-                for i, rec in enumerate(insights['recommendations'], 1):
+                for i, rec in enumerate(recommendations, 1):
                     response += f"• {rec}\n"
                 response += "\n"
             
@@ -309,7 +322,7 @@ Değil  │            │             │
     
     def suggest_pomodoro_duration(self) -> int:
         """Suggest optimal pomodoro duration based on user performance"""
-        sessions = self.db.get_pomodoro_sessions(limit=10)
+        sessions = get_pomodoro_sessions(limit=10)
         
         if not sessions:
             return 25  # Default duration
@@ -328,9 +341,9 @@ Değil  │            │             │
         else:
             return max(15, int(avg_completed_duration))  # Decrease for better completion
     
-    def get_focus_score(self) -> Dict[str, Any]:
+    def get_focus_score(self, user_id: str = None) -> Dict[str, Any]:
         """Calculate user's focus score"""
-        stats = get_productivity_stats(detailed=True)
+        stats = get_productivity_stats(detailed=True, user_id=user_id)
         
         # Calculate different metrics
         consistency = min(100, stats.get('consistency_score', 0))
@@ -374,35 +387,102 @@ Değil  │            │             │
         else:
             return ["Pomodoro tekniğini öğren.", "Basit görevlerle başla."]
     
-    def analyze_performance(self) -> Dict[str, Any]:
+    def analyze_performance(self, user_id: str = None) -> Dict[str, Any]:
         """Analyze user's performance and provide insights"""
-        stats = get_productivity_stats()
+        try:
+            stats = get_productivity_stats(detailed=True, user_id=user_id)
+            
+            # Get recent sessions for trend analysis
+            recent_sessions = get_pomodoro_sessions(user_id, days=7)
+            work_sessions = [s for s in recent_sessions if s.get('phase') == 'work']
+            break_sessions = [s for s in recent_sessions if s.get('phase') == 'break']
+            
+            # Check if there are any sessions
+            if not recent_sessions:
+                return {
+                    'work_efficiency': {
+                        'level': "Başlangıç",
+                        'message': "Henüz pomodoro seansı yapmamışsın. İlk 25 dakikalık odaklanma seansını başlatmaya ne dersin?",
+                        'completion_rate': "0%",
+                        'total_work_time': "0 dakika"
+                    },
+                    'break_balance': {
+                        'balance': "N/A",
+                        'message': "Henüz çalışma verisi yok",
+                        'ratio': "0:0"
+                    },
+                    'task_management': {
+                        'status': "Görev yok",
+                        'message': "Henüz görev eklenmemiş",
+                        'completion_rate': "0%",
+                        'total_tasks': 0,
+                        'completed': 0,
+                        'pending': 0
+                    },
+                    'productivity_trends': {
+                        'trend': "Veri yok",
+                        'message': "Henüz yeterli veri yok"
+                    },
+                    'recommendations': [
+                        "🍅 İlk pomodoro seansını başlat",
+                        "📋 Günlük görevler ekle",
+                        "⏰ 25 dakika odaklan, 5 dakika mola ver"
+                    ]
+                }
+            
+            # Calculate performance metrics
+            total_work_time = sum(s.get('duration_minutes', 0) for s in work_sessions if s.get('completed', False))
+            total_break_time = sum(s.get('duration_minutes', 0) for s in break_sessions if s.get('completed', False))
+            completion_rate = len([s for s in work_sessions if s.get('completed', False)]) / len(work_sessions) * 100 if work_sessions else 0
         
-        # Get recent sessions for trend analysis
-        recent_sessions = self.db.get_pomodoro_sessions(days=7)
-        work_sessions = [s for s in recent_sessions if s.phase == 'work']
-        break_sessions = [s for s in recent_sessions if s.phase == 'break']
+            # Get task completion stats
+            all_tasks = get_tasks(user_id)
+            completed_tasks = [t for t in all_tasks if t.get('completed', False)]
+            pending_tasks = [t for t in all_tasks if not t.get('completed', False)]
+            
+            # Performance insights
+            insights = {
+                'work_efficiency': self._analyze_work_efficiency(stats, total_work_time, completion_rate),
+                'break_balance': self._analyze_break_balance(total_work_time, total_break_time),
+                'task_management': self._analyze_task_management(completed_tasks, pending_tasks),
+                'productivity_trends': self._analyze_productivity_trends(recent_sessions),
+                'recommendations': self._generate_recommendations(stats, completion_rate, total_work_time)
+            }
+            
+            return insights
         
-        # Calculate performance metrics
-        total_work_time = sum(s.duration_minutes for s in work_sessions if s.completed)
-        total_break_time = sum(s.duration_minutes for s in break_sessions if s.completed)
-        completion_rate = len([s for s in work_sessions if s.completed]) / len(work_sessions) * 100 if work_sessions else 0
-        
-        # Get task completion stats
-        all_tasks = self.db.get_tasks()
-        completed_tasks = [t for t in all_tasks if t.completed]
-        pending_tasks = [t for t in all_tasks if not t.completed]
-        
-        # Performance insights
-        insights = {
-            'work_efficiency': self._analyze_work_efficiency(stats, total_work_time, completion_rate),
-            'break_balance': self._analyze_break_balance(total_work_time, total_break_time),
-            'task_management': self._analyze_task_management(completed_tasks, pending_tasks),
-            'productivity_trends': self._analyze_productivity_trends(recent_sessions),
-            'recommendations': self._generate_recommendations(stats, completion_rate, total_work_time)
-        }
-        
-        return insights
+        except Exception as e:
+            # Return friendly error message if analysis fails
+            return {
+                'work_efficiency': {
+                    'level': "Hata",
+                    'message': f"Performans analizi yapılırken bir hata oluştu: {str(e)}",
+                    'completion_rate': "N/A",
+                    'total_work_time': "N/A"
+                },
+                'break_balance': {
+                    'balance': "Hata",
+                    'message': "Analiz yapılamadı",
+                    'ratio': "N/A"
+                },
+                'task_management': {
+                    'status': "Hata",
+                    'message': "Analiz yapılamadı",
+                    'completion_rate': "N/A",
+                    'total_tasks': 0,
+                    'completed': 0,
+                    'pending': 0
+                },
+                'productivity_trends': {
+                    'trend': "Hata",
+                    'message': "Analiz yapılamadı"
+                },
+                'recommendations': [
+                    "🔄 Sayfayı yenile ve tekrar dene",
+                    "📱 Uygulamayı yeniden başlat",
+                    "🔧 Teknik destek al"
+                ]
+            }
     
     def _analyze_work_efficiency(self, stats: Dict, total_work_time: int, completion_rate: float) -> Dict[str, Any]:
         """Analyze work efficiency"""
@@ -515,15 +595,29 @@ Değil  │            │             │
         daily_sessions = defaultdict(list)
         
         for session in recent_sessions:
-            if session.created_at:
-                day = session.created_at.strftime('%Y-%m-%d')
-                daily_sessions[day].append(session)
+            if session.get('created_at'):
+                try:
+                    # Handle different date formats from Supabase
+                    created_at_str = session.get('created_at', '')
+                    if created_at_str:
+                        # Remove microseconds and handle timezone
+                        if '+' in created_at_str:
+                            # Format: '2025-08-21T21:07:14.58982+00:00'
+                            created_at_str = created_at_str.split('+')[0] + '+00:00'
+                        elif created_at_str.endswith('Z'):
+                            created_at_str = created_at_str.replace('Z', '+00:00')
+                        
+                        created_at = datetime.fromisoformat(created_at_str)
+                        day = created_at.strftime('%Y-%m-%d')
+                        daily_sessions[day].append(session)
+                except (ValueError, TypeError):
+                    continue
         
         # Calculate daily productivity
         daily_productivity = {}
         for day, sessions in daily_sessions.items():
-            work_sessions = [s for s in sessions if s.phase == 'work' and s.completed]
-            daily_productivity[day] = sum(s.duration_minutes for s in work_sessions)
+            work_sessions = [s for s in sessions if s.get('phase') == 'work' and s.get('completed', False)]
+            daily_productivity[day] = sum(s.get('duration_minutes', 0) for s in work_sessions)
         
         if len(daily_productivity) < 2:
             return {
